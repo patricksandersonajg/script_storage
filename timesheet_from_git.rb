@@ -19,7 +19,7 @@ require 'set'
 
 
 # Define global parameters
-workspace_dir = '.'
+workspace_dir = '../'
 committer_name = 'patrick'
 today = Date.today
 $start_of_week = today - today.wday # Calculate the most recent Sunday
@@ -51,34 +51,49 @@ def find_git_repos(directory)
 end
 
 # Function to get branches with recent activity and commit count
-def get_git_info(repo_path, committer_name)
-  Dir.chdir(repo_path) do
+def get_git_info(repo_path, committer_identifier, hide_branch_merges: true)
+   Dir.chdir(repo_path) do
     # Get all branches
     all_branches = execute_command('git for-each-ref --format="%(refname:short)" refs/heads').split("\n")
     
-    # Initialize a hash to store commits by day
+    # Initialize a hash to store commits and merges by day
     commits_by_day = Hash.new { |hash, key| hash[key] = Set.new }
     
-    # Iterate over each branch to collect commits
+    # Iterate over each branch to collect commits and merges
     all_branches.each do |branch|
-      # Filter commits by committer name and get commit messages with dates
-      recent_commits = execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%ad %s' --author='#{committer_name}' --date=short").split("\n")
+      # Filter commits (including merges) by committer name or email containing the identifier
+      recent_commits = execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%ad %s' --author='#{committer_identifier}' --date=short").split("\n")
+      recent_merges = execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%ad %s' --merges --author='#{committer_identifier}' --date=short").split("\n")
       
-      # Organize commits by day
-      recent_commits.each do |commit|
-        date, message = commit.split(' ', 2)
+      # Combine commits and merges
+      recent_activity = (recent_commits + recent_merges).uniq
+      
+      # Optionally filter out branch merges
+      if hide_branch_merges
+        recent_activity.reject! do |activity|
+          # Strict regex to match branch merge messages
+          activity.match?(/^*Merge branch */)
+        end
+      end
+      
+      # Organize commits and merges by day
+      recent_activity.each do |activity|
+        date, message = activity.split(' ', 2)
         commits_by_day[date] << message
       end
     end
     
-    # Get branches with recent commits by the specified committer
+    # Get branches with recent commits or merges by the specified committer identifier
     branches_with_recent_activity = all_branches.select do |branch|
-      !execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%s' --author='#{committer_name}'").empty?
+      !execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%s' --author='#{committer_identifier}'").empty? ||
+      !execute_command("git log #{branch} --since='#{$start_of_week}' --pretty=format:'%s' --merges --author='#{committer_identifier}'").empty?
     end
     
     { branches: branches_with_recent_activity, commits_by_day: commits_by_day }
   end
 end
+
+
 
 # Function to format date
 def format_date(date_str)
