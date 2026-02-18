@@ -1,3 +1,4 @@
 # Ignore log files in this directory
 .DS_Store
 *.log
+data_folder/**
