@@ -1,26 +1,21 @@
 require 'csv'
 require 'date'
 
-# Put the txt files from a weekly smtp2go bounce report in a directory within DATA_FOLDER named as the iso date.
-# Run this script with something like `ruby process_bounces.rb 2026-02-18`
+# This is a helper script that takes in the .txt attachments of the weekly bounce report summary email from SMTP2GO.
+# It expects those files in a directory named as the iso date (yyyy-mm-dd), in the DATA_FOLDER (see variables below).
+# A master csv is kept in the data folder, recording each email address and how many times we've encountered it.
 
-# Expect a nice output you can copy into Outlook, to forward the SMTP2GO onto the relevant people to action.
+# After processing you'll get a summary output which you can use to copy and paste into Outlook, as you forward the SMTP2GO email with it's attachments onto the relevant people (defined in CLIENT_INFO_CSV).
+# Those people should then cleanse their data - if we see repeat offenders listed in the summary it means they haven't cleansed their data since last time, and that will have negatively impacted our sender reputation.
 
-# Details about who's responsible for which client are in CLIENT_INFO_CSV
+# Usage: Will work with any version of Ruby above 2.6. Run with something like: `ruby process_bounces 2026-02-19`
 
-
-DATA_FOLDER = 'data_folder'
+DATA_FOLDER = '/Volumes/gbs uk/Communications/Bulk email processing/smtp2go_weekly_bounces/source_files'
+CLIENT_INFO_CSV = File.join(DATA_FOLDER, 'client_info.csv') # Mapping sender email addresses to clients and responsible people
 MASTER_CSV = File.join(DATA_FOLDER, 'all_bad_emails.csv')
-CLIENT_INFO_CSV = File.join(DATA_FOLDER, 'client_info.csv')
 
-# Ensure the master CSV exists
-unless File.exist?(MASTER_CSV)
-  CSV.open(MASTER_CSV, 'w') do |csv|
-    csv  ['email_address', 'sender_email', 'reason', 'first_seen', 'last_seen', 'sightings']
-  end
-end
 
-# Function to process a directory of files
+# Run through a collection of .txt files in the iso-date named folder.
 def process_directory(directory)
   data_filepath = File.join(DATA_FOLDER, directory)
 
@@ -41,30 +36,30 @@ def process_directory(directory)
   # Summary data structure
   summary = Hash.new { |hash, key| hash[key] = { 'new' => Hash.new(0), 'repeat' => 0 } }
 
-  # Process each file in the directory
+  # Process each file in the ISO date directory.
   Dir.glob(File.join(data_filepath, '*.txt')).each do |file|
-    # Extract sender email and reason from the file name
-    filename = File.basename(file)
+    filename = File.basename(file) # Expect something like "noreply@domain.com_bounce.txt"
     sender_email, reason = filename.split('_', 2)
     reason = reason.sub('.txt', '')
-    puts "\n\nChecking #{filename}\n\n"
 
-    # Read the email addresses from the file
     File.readlines(file).each do |line|
       email = line.strip
 
-      if master_list.key?(email) # This is a repeat offender, we've seen them before.
-        puts "Email #{email} was first reported on #{master_list[email]['first_seen']}, has been seen #{master_list[email]['sightings']} times since, most recently #{master_list[email]['last_seen']}"
-        summary[sender_email]['repeat'] += 1
+      if master_list.key?(email)
+        # Likely a repeat offender...
 
+        unless master_list[email]['first_seen'] == iso_date
+          # If we haven't added them via the current file (and rerun this process)...
+          summary[sender_email]['repeat'] += 1
+        end
+
+        # Update the last_seen date and increment sightings, if it's not already updated
         if master_list[email]['last_seen'] != iso_date
-          # If this is the first run of this file, update the dates and counts.
           master_list[email]['last_seen'] = iso_date
           master_list[email]['sightings'] = master_list[email]['sightings'].to_i + 1
         end
-
       else
-        # If the email is not in the master list, add it
+        # A new offender, add them to the list.
         master_list[email] = {
           'email_address' => email,
           'sender_email' => sender_email,
@@ -73,7 +68,6 @@ def process_directory(directory)
           'last_seen' => iso_date,
           'sightings' => 1
         }
-        # Update the summary for new emails
         summary[sender_email]['new'][reason] += 1
       end
     end
@@ -87,37 +81,63 @@ def process_directory(directory)
     end
   end
 
-  # Print the summary
   puts "\n----------------------------"
   puts "\nSummary of processing:"
   summary.each do |sender_email, data|
     puts "\n#{client_details_from_file(sender_email)}"
     data['new'].each do |reason, count|
-      puts "  New #{reason.capitalize}: #{count}" if count > 0
+      puts "  • New #{reason}s: #{count}" if count > 0
     end
-    puts "  Repeat offenders: #{data['repeat']}" if data['repeat'] > 0
+    puts bold("  • Repeat offenders: #{data['repeat']}") if data['repeat'] > 0
+  end
+end
+
+
+def bold(text)
+  # Slightly dirty way of getting bold font, but it will survive a copy-paste into Outlook.
+  text.tr('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', '𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳')
+end
+
+# Validate if the input is a valid ISO date (yyyy-mm-dd)
+def valid_iso_date?(date_string)
+  begin
+    Date.iso8601(date_string)
+    true
+  rescue ArgumentError
+    false
   end
 end
 
 def client_details_from_file(sender_email)
-  cst = sender_email # If no record found, the sender_email is better than nothing
+  client_details = sender_email
   if File.exist?(CLIENT_INFO_CSV)
     CSV.foreach(CLIENT_INFO_CSV, headers: true) do |row|
       if row['sender_email'] == sender_email
-        cst = "#{row['client_name']} - #{row['contacts']}"
+        client_details = "#{row['client_name']} - #{row['contacts']}"
         break
       end
     end
   end
-  return cst
+  return client_details
 end
+
 
 
 # Main script execution
-if ARGV.length != 1
-  puts "Usage: ruby process_bad_emails.rb iso-date named directory (eg: 2026-02-17)"
+
+input_date = ARGV[0]
+
+unless valid_iso_date?(input_date)
+  puts "Error: Expected an iso-date as an input (eg: 2026-02-17). Should match a directory name within #{DATA_FOLDER}/ which contains the smtp2go bounce txt files from their weekly email report."
   exit 1
 end
 
-process_directory(ARGV[0])
-puts "\nProcessing complete. Master list updated."
+# Ensure the master CSV exists, create blank if not.
+unless File.exist?(MASTER_CSV)
+  CSV.open(MASTER_CSV, 'w') do |csv|
+    csv << ['email_address', 'sender_email', 'reason', 'first_seen', 'last_seen', 'sightings']
+  end
+end
+
+process_directory(input_date)
+puts "\nProcessing complete."
