@@ -12,6 +12,7 @@ require 'date'
 
 DATA_FOLDER = '/Volumes/gbs uk/Communications/Bulk email processing/smtp2go_weekly_bounces/source_files'
 CLIENT_INFO_CSV = File.join(DATA_FOLDER, 'client_info.csv') # Mapping sender email addresses to clients and responsible people
+EMAIL_INTRO_TEXT = File.join(DATA_FOLDER, 'email_intro_text.txt') # The standard text for pasting into the email to inform CST about what to do.
 MASTER_CSV = File.join(DATA_FOLDER, 'all_bad_emails.csv')
 
 
@@ -81,15 +82,27 @@ def process_directory(directory)
     end
   end
 
-  puts "\n----------------------------"
-  puts "\nSummary of processing:"
-  summary.each do |sender_email, data|
-    puts "\n#{client_details_from_file(sender_email)}"
-    data['new'].each do |reason, count|
-      puts "  • New #{reason}s: #{count}" if count > 0
+  if summary.count.positive?
+    puts "\n----------------------------\n"
+    puts "Copy/Paste the test below into the forwarded SMTP2GO bounces email"
+    puts "Then replace names with the @tag versions, and make any edits you see fit."
+    puts "To make changes to this text and the mapping of projects -> people, edit the files in: "
+    puts "#{DATA_FOLDER}"
+    puts "\n----------------------------\n"
+
+    output_email_intro_text
+
+    puts "\n\n\n"
+    summary.each do |sender_email, data|
+      puts "\n #{ bold(client_details_from_file(sender_email)) }"
+      data['new'].each do |reason, count|
+        puts "  • New #{reason}s: #{count}" if count > 0
+      end
+      puts bold("  • Repeat offenders: #{data['repeat']}") if data['repeat'] > 0
     end
-    puts bold("  • Repeat offenders: #{data['repeat']}") if data['repeat'] > 0
-  end
+  else
+    puts "Nothing new to report, have you already run this process for #{iso_date}? (Repeat offenders aren't reported if they first occurred in the current target date's files.)"
+   end
 end
 
 
@@ -119,6 +132,17 @@ def client_details_from_file(sender_email)
     end
   end
   return client_details
+end
+
+def output_email_intro_text
+  # Expects plain text file with **markdown style notation** for bold sections
+  if File.exist?(EMAIL_INTRO_TEXT)
+    text = File.read(EMAIL_INTRO_TEXT)
+    processed_text = text.gsub(/\*\*(.*?)\*\*/m) { bold($1) }
+    puts "\n#{processed_text}"
+  else
+    puts "\nWarning: #{EMAIL_INTRO_TEXT} not found in #{DATA_FOLDER}"
+  end
 end
 
 
