@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generic background/image collector for content-driven sites (e.g., Foleon embeds)
+Image extractor for Woodruff Sawyer Foleon type sites. To use as a basis for rebuilding them as Core Bedrocc sites.
 
 What it does
 - Crawls starting from a given URL (stays within that URL prefix).
@@ -20,6 +20,11 @@ Output location
 - The script creates an output folder next to this script, derived from the URL and prefixed with 'assets_of_', e.g.:
     https://www.mybenefitsnow.com/calix-candidate/home  ->  assets_of_www_mybenefitsnow_com_calix-candidate_home
   Files are saved into: <this_script_dir>/<derived_folder>
+
+
+Next steps
+  There's a Ruby script foleon_image_resizer.rb (I know, this is Python...but Ruby is easier for image manipulation on my mac) which will take the output of this process and resize them to the expected Bedrocc dimensions.
+
 """
 
 import os
@@ -531,6 +536,8 @@ def main():
         print(f" - {u}")
     print(f"Saved {saved} images to {out_dir}")
 
+    print(f"If you want to now resize these to the likely dimensions needed for Bedrocc, run:")
+    print(f"ruby foleon_image_resizer.rb {out_dir}")
 
 if __name__ == "__main__":
     main()

@@ -48,6 +48,34 @@ def error(msg)
   STDERR.puts "[ERROR] #{msg}"
 end
 
+# Try to open a URL in the user's default browser across common OSes.
+# Returns true if a launch command was executed, false otherwise.
+def open_url_in_browser(url)
+  begin
+    host_os = RbConfig::CONFIG['host_os'] rescue ''
+    # Prefer explicit tools if available
+    if host_os =~ /darwin/i
+      # macOS
+      run("open #{Shellwords.escape(url)}", allow_failure: true)
+      return true
+    elsif host_os =~ /linux/i
+      opener = which('xdg-open') || which('gio')
+      if opener
+        run("#{opener} #{Shellwords.escape(url)}", allow_failure: true)
+        return true
+      end
+    elsif host_os =~ /mswin|mingw|cygwin/i
+      # Windows
+      # Use start via cmd.exe; quoting as empty title then URL
+      run(%{cmd /c start "" #{Shellwords.escape(url)}}, allow_failure: true)
+      return true
+    end
+  rescue => e
+    warn "Failed to open browser: #{e.message}"
+  end
+  false
+end
+
 def abort_with(msg, code = 1)
   error(msg)
   exit(code)
@@ -292,16 +320,35 @@ def ensure_branch_from_default(dir, branch_name)
   current = git_current_branch(dir)
   return current if current == branch_name
 
+  # Always fetch latest refs
+  run('git fetch --prune --quiet origin', chdir: dir)
+
+  # If the branch already exists locally, just switch to it and fast-forward it
+  out_local, _e1, _s1 = run('git branch --list', chdir: dir, allow_failure: true)
+  local_branches = out_local.split("\n").map { |l| l.gsub('*', '').strip }.reject(&:empty?)
+  if local_branches.include?(branch_name)
+    log "Branch '#{branch_name}' already exists locally. Checking it out and fast-forwarding."
+    run("git checkout #{branch_name}", chdir: dir)
+    # Try to fast-forward with upstream if set; if not, this will be a no-op
+    run('git pull --ff-only', chdir: dir, allow_failure: true)
+    return branch_name
+  end
+
+  # If the branch exists on origin, create local tracking from it
+  out_remote, _e2, _s2 = run('git branch -r', chdir: dir, allow_failure: true)
+  remote_branches = out_remote.split("\n").map(&:strip)
+  if remote_branches.any? { |rb| rb == "origin/#{branch_name}" }
+    log "Branch 'origin/#{branch_name}' exists. Creating local tracking branch."
+    run("git checkout -t origin/#{branch_name}", chdir: dir)
+    return branch_name
+  end
+
+  # Otherwise, create a fresh branch from the current default branch
   default_branch = git_default_branch(dir)
   log "Default branch detected: #{default_branch}"
-
-  # fetch latest and fast-forward default
-  run('git fetch --prune --quiet origin', chdir: dir)
   run("git checkout #{default_branch}", chdir: dir)
   run('git pull --ff-only', chdir: dir)
-
-  # create/reset the target branch from default
-  run("git checkout -B #{branch_name}", chdir: dir)
+  run("git checkout -b #{branch_name}", chdir: dir)
   branch_name
 end
 
@@ -404,6 +451,12 @@ def main
       if url
         log 'Please visit the following URL to create a draft PR:'
         puts url
+        # Also try to open it in the user's default browser
+        if open_url_in_browser(url)
+          log 'Opening the PR compare page in your default browser...'
+        else
+          warn 'Could not automatically open the browser. Please copy/paste the URL above.'
+        end
       else
         warn "Could not determine GitHub remote URL. Please open your repository on GitHub and create a PR from branch '#{created_branch}'."
       end
